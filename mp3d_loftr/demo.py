@@ -138,7 +138,7 @@ if __name__ == '__main__':
         image0 = cv2.imread(img, cv2.IMREAD_GRAYSCALE)
         image0 = cv2.resize(image0, (args.w, args.h))
         image0 = torch.from_numpy(image0).float()[None].unsqueeze(0).cuda() / 255
-        image1 = cv2.imread(first, cv2.IMREAD_GRAYSCALE)
+        image1 = cv2.imread(last, cv2.IMREAD_GRAYSCALE)
         image1 = cv2.resize(image1, (args.w, args.h))
         image1 = torch.from_numpy(image1).float()[None].unsqueeze(0).cuda() / 255
 
