@@ -6,6 +6,7 @@ cd far
 chmod 777 install_far.sh process_video.sh
 ./install_far.sh
 
+#all images are rescaled to 640x480 so fx_intrinsic and fy_intrinsic needs to be calcualted with x_fov and y_fov and dimensions 640x480
 ./process_video.sh $fx_intrinsic $fy_intrinsic http://example/video.mp4
 ```
 # [FAR: Flexible, Accurate and Robust 6DoF Relative Camera Pose Estimation](https://arxiv.org/abs/2403.03221)
