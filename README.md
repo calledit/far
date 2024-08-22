@@ -1,3 +1,13 @@
+# branch with video processing scripts
+
+```
+git clone --recursive https://github.com/calledit/far.git
+cd far
+chmod 777 install_far.sh process_video.sh
+./install_far.sh
+
+./process_video.sh $fx_intrinsic $fy_intrinsic http://example/video.mp4
+```
 # [FAR: Flexible, Accurate and Robust 6DoF Relative Camera Pose Estimation](https://arxiv.org/abs/2403.03221)
 
 <a href="https://crockwell.github.io/far/"><img src="https://img.shields.io/static/v1?label=Project&message=Website&color=red" height=20.5></a> 
