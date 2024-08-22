@@ -12,5 +12,4 @@ mkdir imgs_4fps
 ffmpeg -i video.mp4 -vf 'scale=640:480' imgs_4fps/%04d.png
 
 cd ..
-cd ..
 scripts/demo.sh $1 $2
