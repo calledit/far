@@ -6,6 +6,7 @@ from src.config.default import get_cfg_defaults
 from src.lightning.lightning_loftr import PL_LoFTR
 import sys
 import torch
+from pathlib import Path
 import json
 import cv2
 import numpy as np
@@ -123,60 +124,81 @@ if __name__ == '__main__':
 
     mypath = "/root/far/mp3d_loftr/data/imgs_4fps/"
     images = [f for f in listdir(mypath) if isfile(join(mypath, f))]
-    last = None
+    
+    first = True
     trans = open("tranforms.json", "w")
     trans.write("[")
-    for img_name in images:
-        img = join(mypath, img_name)
-        if last == None:
+    nths = [1, 5, 10, 25, 50, 100, 1000]
+    for nth in nths:
+        last, last_img_name = None, None
+        num = -1
+        for img_name in images:
+            num+=1
+            if not num%nth == 0:
+                continue
+            img = join(mypath, img_name)
+            if last == None:
+                last = img
+                last_img_name = img_name
+                continue
+            
+            if first:
+                trans.write(",")#Write json comma
+                first = False
+    
+    
+            # load data
+            image0 = cv2.imread(img, cv2.IMREAD_GRAYSCALE)
+            image0 = cv2.resize(image0, (args.w, args.h))
+            image0 = torch.from_numpy(image0).float()[None].unsqueeze(0).cuda() / 255
+            image1 = cv2.imread(last, cv2.IMREAD_GRAYSCALE)
+            image1 = cv2.resize(image1, (args.w, args.h))
+            image1 = torch.from_numpy(image1).float()[None].unsqueeze(0).cuda() / 255
+    
+    
+            # unused
+            depth0 = depth1 = torch.tensor([]).unsqueeze(0).cuda()
+            T_0to1 = T_1to0 = torch.tensor([]).unsqueeze(0).cuda()
+            scene_name = torch.tensor([]).unsqueeze(0).cuda()
+            loaded_preds = torch.tensor([]).unsqueeze(0).cuda()
+            lightweight_numcorr = torch.tensor([0]).unsqueeze(0).cuda()
+    
+            batch = {
+                'image0': image0,   # (1, h, w)
+                'image1': image1,
+                'K0': K_0,  # (3, 3)
+                'K1': K_1,
+                # below is unused
+                'depth0': depth0,   # (h, w)
+                'depth1': depth1,
+                'T_0to1': T_0to1,   # (4, 4)
+                'T_1to0': T_1to0,
+                'dataset_name': ['mp3d'],
+                'scene_id': scene_name,
+                'pair_id': 0,
+                'pair_names': (args.img_path0, args.img_path1),
+                'loaded_predictions': loaded_preds,
+                'lightweight_numcorr': lightweight_numcorr,
+            }
+    
+    
+            # forward pass
+            batch = model.test_step(batch, batch_idx=0, skip_eval=True)
+            
+            data = batch['loftr_rt'].cpu().numpy()
+            json_line = {
+                'nth':nth,
+                'from_frame': int(Path(img_name).stem),
+                'to_frame': int(Path(img_name)),
+                'transform': data
+            }
+            dumped = json.dumps(json_line, default=default)
+            
+            print(dumped)
+            trans.write(dumped+"}\n")
+    
+            # output
+            #print("predicted pose is:\n", np.round(batch['loftr_rt'].cpu().numpy(),4))
             last = img
-            first = img
-            continue
-
-
-        # load data
-        image0 = cv2.imread(img, cv2.IMREAD_GRAYSCALE)
-        image0 = cv2.resize(image0, (args.w, args.h))
-        image0 = torch.from_numpy(image0).float()[None].unsqueeze(0).cuda() / 255
-        image1 = cv2.imread(last, cv2.IMREAD_GRAYSCALE)
-        image1 = cv2.resize(image1, (args.w, args.h))
-        image1 = torch.from_numpy(image1).float()[None].unsqueeze(0).cuda() / 255
-
-
-        # unused
-        depth0 = depth1 = torch.tensor([]).unsqueeze(0).cuda()
-        T_0to1 = T_1to0 = torch.tensor([]).unsqueeze(0).cuda()
-        scene_name = torch.tensor([]).unsqueeze(0).cuda()
-        loaded_preds = torch.tensor([]).unsqueeze(0).cuda()
-        lightweight_numcorr = torch.tensor([0]).unsqueeze(0).cuda()
-
-        batch = {
-            'image0': image0,   # (1, h, w)
-            'image1': image1,
-            'K0': K_0,  # (3, 3)
-            'K1': K_1,
-            # below is unused
-            'depth0': depth0,   # (h, w)
-            'depth1': depth1,
-            'T_0to1': T_0to1,   # (4, 4)
-            'T_1to0': T_1to0,
-            'dataset_name': ['mp3d'],
-            'scene_id': scene_name,
-            'pair_id': 0,
-            'pair_names': (args.img_path0, args.img_path1),
-            'loaded_predictions': loaded_preds,
-            'lightweight_numcorr': lightweight_numcorr,
-        }
-
-
-        # forward pass
-        batch = model.test_step(batch, batch_idx=0, skip_eval=True)
-        data = batch['loftr_rt'].cpu().numpy()
-        dumped = json.dumps(data, default=default)
-        print("{\""+img_name+"\": "+dumped+"},")
-        trans.write("{\""+img_name+"\": "+dumped+"},\n")
-
-        # output
-        #print("predicted pose is:\n", np.round(batch['loftr_rt'].cpu().numpy(),4))
-        last = img
+            last_img_name = img_name
     trans.write("]")
