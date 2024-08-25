@@ -146,7 +146,7 @@ if __name__ == '__main__':
                 last_img_name = img_name
                 continue
             
-            if first:
+            if not first:
                 trans.write(",")#Write json comma
                 first = False
     
