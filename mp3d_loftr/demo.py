@@ -188,8 +188,8 @@ if __name__ == '__main__':
             data = batch['loftr_rt'].cpu().numpy()
             json_line = {
                 'nth':nth,
-                'from_frame': int(Path(img_name).stem),
-                'to_frame': int(Path(img_name)),
+                'from_frame': int(Path(last_img_name).stem),
+                'to_frame': int(Path(img_name).stem),
                 'transform': data
             }
             dumped = json.dumps(json_line, default=default)
