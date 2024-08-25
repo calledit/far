@@ -28,6 +28,10 @@ def parse_args():
     parser.add_argument(
         '--batch_size', type=int, default=1, help='batch_size per gpu')
     parser.add_argument(
+        '--output', type=str, default='tranforms.json', help='output file location')
+    parser.add_argument(
+        '--frame_image_folder', type=str, default="/root/far/mp3d_loftr/data/imgs_4fps/", help='folder with video frames')
+    parser.add_argument(
         '--num_workers', type=int, default=2)
     parser.add_argument(
         '--fx', type=float, default=517.97, help='focal length x')
@@ -122,13 +126,13 @@ if __name__ == '__main__':
     # lightning module
     model = PL_LoFTR(config, pretrained_ckpt=args.ckpt_path, split="test").eval().cuda()
 
-    mypath = "/root/far/mp3d_loftr/data/imgs_4fps/"
-    images = [f for f in listdir(mypath) if isfile(join(mypath, f))]
+    args.frame_image_folder = "/root/far/mp3d_loftr/data/imgs_4fps/"
+    images = [f for f in listdir(args.frame_image_folder) if isfile(join(args.frame_image_folder, f))]
     
     first = True
-    trans = open("tranforms.json", "w")
+    trans = open(args.output, "w")
     trans.write("[")
-    nths = [1, 5, 10, 25, 50, 100, 1000]
+    nths = [1000, 100, 50, 25, 10, 5, 1]
     for nth in nths:
         last, last_img_name = None, None
         num = -1
@@ -136,7 +140,7 @@ if __name__ == '__main__':
             num+=1
             if not num%nth == 0:
                 continue
-            img = join(mypath, img_name)
+            img = join(args.frame_image_folder, img_name)
             if last == None:
                 last = img
                 last_img_name = img_name
