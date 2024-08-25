@@ -146,9 +146,10 @@ if __name__ == '__main__':
                 last_img_name = img_name
                 continue
             
-            if not first:
-                trans.write(",")#Write json comma
+            if first:
                 first = False
+            else:
+                trans.write(",")#Write json comma
     
     
             # load data
