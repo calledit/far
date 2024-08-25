@@ -200,7 +200,7 @@ if __name__ == '__main__':
             dumped = json.dumps(json_line, default=default)
             
             print(dumped)
-            trans.write(dumped+"}\n")
+            trans.write(dumped+"\n")
     
             # output
             #print("predicted pose is:\n", np.round(batch['loftr_rt'].cpu().numpy(),4))
