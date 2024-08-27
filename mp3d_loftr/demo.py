@@ -113,7 +113,15 @@ if __name__ == '__main__':
         K = torch.from_numpy(K.astype(np.double)).unsqueeze(0).cuda()
         return K, K
 
-    K_0, K_1 = get_intrinsics(float(args.fx), float(args.fy), float(args.cx), float(args.cy))
+
+    #fov_x, fov_y = 47.5, 35.5
+    def intrin_from(fov_x, fov_y):
+        fx = 640 / (2 * np.tan(np.deg2rad(fov_x) / 2))
+        fy = 480 / (2 * np.tan(np.deg2rad(fov_y) / 2))
+        return get_intrinsics(fx, fy, float(args.cx), float(args.cy))
+
+    #K_0, K_1 = get_intrinsics(float(args.fx), float(args.fy), float(args.cx), float(args.cy))
+    #K_0, K_1 = intrin_from(61.9, 43.6)
 
     def default(obj):
         if type(obj).__module__ == np.__name__:
@@ -123,87 +131,202 @@ if __name__ == '__main__':
                return obj.item()
         raise TypeError('Unknown type:', type(obj))
 
+
     # lightning module
     model = PL_LoFTR(config, pretrained_ckpt=args.ckpt_path, split="test").eval().cuda()
 
-    args.frame_image_folder = "/root/far/mp3d_loftr/data/imgs_4fps/"
+    # unused
+    depth0 = depth1 = torch.tensor([]).unsqueeze(0).cuda()
+    T_0to1 = T_1to0 = torch.tensor([]).unsqueeze(0).cuda()
+    scene_name = torch.tensor([]).unsqueeze(0).cuda()
+    loaded_preds = torch.tensor([]).unsqueeze(0).cuda()
+    lightweight_numcorr = torch.tensor([0]).unsqueeze(0).cuda()
+
+    def load_image(path):
+        # load data
+        image0 = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
+        image0 = cv2.resize(image0, (args.w, args.h))
+        image0 = torch.from_numpy(image0).float()[None].unsqueeze(0).cuda() / 255
+        return image0
+
+    def solve_tranform(fov_x, fov_y, image0, image1, expect_fail = False):
+        K_0, K_1 = intrin_from(fov_x, fov_y)
+        batch = {
+            'image0': image0,   # (1, h, w)
+            'image1': image1,
+            'K0': K_0,  # (3, 3)
+            'K1': K_1,
+            # below is unused
+            'depth0': depth0,   # (h, w)
+            'depth1': depth1,
+            'T_0to1': T_0to1,   # (4, 4)
+            'T_1to0': T_1to0,
+            'dataset_name': ['mp3d'],
+            'scene_id': scene_name,
+            'pair_id': 0,
+            'pair_names': (args.img_path0, args.img_path1),
+            'loaded_predictions': loaded_preds,
+            'lightweight_numcorr': lightweight_numcorr,
+            'expect_fail': expect_fail
+        }
+
+
+        # forward pass
+        batch = model.test_step(batch, batch_idx=0, skip_eval=True)
+
+        data = batch['loftr_rt'].cpu().numpy()
+
+        if (np.eye(4)[:3,:4] == data).all():
+            return False
+        return data
+
+    def solve_tranform_no_fov(image0, image1, nr_of_tries=5, initial_gues_fov_x = 47.5, initial_gues_fov_y = 35.5):
+        try_fov_x, try_fov_y, solution = find_fov(
+                [(image0, image1)],
+                initial_gues_fov_x = initial_gues_fov_x,
+                initial_gues_fov_y = initial_gues_fov_y,
+                x_steps = nr_of_tries,
+                y_steps = nr_of_tries,
+                return_when_found = True)
+        return (try_fov_x, try_fov_y, solution)
+
+    def find_fov(loaded_image_pairs = [], return_when_found=False, initial_gues_fov_x = 47.5, initial_gues_fov_y = 35.5, step=1, x_steps = 15, y_steps = 10):
+        fov_x_2_try = [initial_gues_fov_x]
+        fov_y_2_try = [initial_gues_fov_y]
+
+        x = 1
+        while x < x_steps:
+            fov_x_2_try.append(initial_gues_fov_x - x)
+            fov_x_2_try.append(initial_gues_fov_x + x)
+            x += step
+
+        y = 1
+        while y < y_steps:
+            fov_y_2_try.append(initial_gues_fov_y - y)
+            fov_y_2_try.append(initial_gues_fov_y + y)
+            y += step
+
+        tries = {}
+        for try_fov_y in sorted(fov_y_2_try):
+            tries[try_fov_y] = {}
+            for try_fov_x  in sorted(fov_x_2_try):
+                tries[try_fov_y][try_fov_x] = 0
+
+        if not return_when_found:
+            fovs = open("fov_solutions.json", "w")
+        solutions = []
+        for try_fov_y in fov_y_2_try:
+            for try_fov_x in fov_x_2_try:
+                #print("trying: ", "fov_x:", try_fov_x, "fov_y:", try_fov_y)
+                had_failure = False
+                solution = False
+                for earlier, later in loaded_image_pairs:
+                    solution = solve_tranform(try_fov_x, try_fov_y, later, earlier, expect_fail = not return_when_found)
+                    if not (solution is not False):
+                        had_failure = True
+                        if return_when_found:
+                            break
+                    else:
+                        tries[try_fov_y][try_fov_x] +=1
+                if not had_failure:
+                    if return_when_found:
+                        return (try_fov_x, try_fov_y, solution)
+                    sol = [try_fov_x, try_fov_y]
+                    solutions.append(sol)
+                    print("found solution fov in degres:", sol)
+
+        if not return_when_found:
+            fovs.write(json.dumps(tries, default=default))
+            fovs.close()
+            x_solutions = {}
+            y_solutions = {}
+            for tra in solutions:
+                if tra[0] not in x_solutions:
+                    x_solutions[tra[0]] = 0
+                x_solutions[tra[0]] += 1
+
+                if tra[1] not in y_solutions:
+                    y_solutions[tra[1]] = 0
+                y_solutions[tra[1]] += 1
+            nr_tries = len(fov_y_2_try)*len(fov_x_2_try)
+            for x in x_solutions:
+                x_solutions[x] /=nr_tries
+            for y in y_solutions:
+                y_solutions[y] /=nr_tries
+
+            x_solutions = {k: v for k, v in sorted(x_solutions.items(), key=lambda item: item[1])}
+            y_solutions = {k: v for k, v in sorted(y_solutions.items(), key=lambda item: item[1])}
+            print(x_solutions)
+            print(y_solutions)
+        return (False, False, False)
+
+    #search for instrinsics
+    search_solution_to_list_of_frames = False
+    if search_solution_to_list_of_frames:
+        frame2frame = [13, 15, 17, 34]
+        loaded_image_pairs = []
+        for i in frame2frame:
+            loaded_image_pairs.append((load_image(f"{args.frame_image_folder}{(i-1):06d}.png"), load_image(f"{args.frame_image_folder}{i:06d}.png")))
+
+        find_fov(
+            loaded_image_pairs=loaded_image_pairs,
+            initial_gues_fov_x = 56,
+            initial_gues_fov_y = 32,
+            step=1, x_steps = 10, y_steps = 10
+            )
+
+
+
+    #args.frame_image_folder = "/root/far/mp3d_loftr/data/imgs_4fps/"
     images = [f for f in listdir(args.frame_image_folder) if isfile(join(args.frame_image_folder, f))]
-    
+
     first = True
     trans = open(args.output, "w")
     trans.write("[")
     nths = [1000, 100, 50, 25, 10, 5, 1]
+    #nths = [1]
     for nth in nths:
-        last, last_img_name = None, None
+        last_frame, last_img_name = None, None
         num = -1
         for img_name in images:
             num+=1
             if not num%nth == 0:
                 continue
-            img = join(args.frame_image_folder, img_name)
-            if last == None:
-                last = img
+            img_path = join(args.frame_image_folder, img_name)
+            curent_frame = load_image(img_path)
+            if last_frame == None:
+                last_frame = curent_frame
                 last_img_name = img_name
                 continue
-            
+
             if first:
                 first = False
             else:
                 trans.write(",")#Write json comma
-    
-    
-            # load data
-            image0 = cv2.imread(img, cv2.IMREAD_GRAYSCALE)
-            image0 = cv2.resize(image0, (args.w, args.h))
-            image0 = torch.from_numpy(image0).float()[None].unsqueeze(0).cuda() / 255
-            image1 = cv2.imread(last, cv2.IMREAD_GRAYSCALE)
-            image1 = cv2.resize(image1, (args.w, args.h))
-            image1 = torch.from_numpy(image1).float()[None].unsqueeze(0).cuda() / 255
-    
-    
-            # unused
-            depth0 = depth1 = torch.tensor([]).unsqueeze(0).cuda()
-            T_0to1 = T_1to0 = torch.tensor([]).unsqueeze(0).cuda()
-            scene_name = torch.tensor([]).unsqueeze(0).cuda()
-            loaded_preds = torch.tensor([]).unsqueeze(0).cuda()
-            lightweight_numcorr = torch.tensor([0]).unsqueeze(0).cuda()
-    
-            batch = {
-                'image0': image0,   # (1, h, w)
-                'image1': image1,
-                'K0': K_0,  # (3, 3)
-                'K1': K_1,
-                # below is unused
-                'depth0': depth0,   # (h, w)
-                'depth1': depth1,
-                'T_0to1': T_0to1,   # (4, 4)
-                'T_1to0': T_1to0,
-                'dataset_name': ['mp3d'],
-                'scene_id': scene_name,
-                'pair_id': 0,
-                'pair_names': (args.img_path0, args.img_path1),
-                'loaded_predictions': loaded_preds,
-                'lightweight_numcorr': lightweight_numcorr,
-            }
-    
-    
-            # forward pass
-            batch = model.test_step(batch, batch_idx=0, skip_eval=True)
-            
-            data = batch['loftr_rt'].cpu().numpy()
+
+            fov_x, fov_y = 70, 55
+            transform = solve_tranform(fov_x, fov_y, curent_frame, last_frame)
+
             json_line = {
                 'nth':nth,
                 'from_frame': int(Path(last_img_name).stem),
                 'to_frame': int(Path(img_name).stem),
-                'transform': data
             }
+
+            if not (transform is not False):
+                solv_x, solv_y, transform = solve_tranform_no_fov(curent_frame, last_frame, nr_of_tries=2, initial_gues_fov_x = fov_x, initial_gues_fov_y = fov_y)
+                if transform is not False:
+                    json_line['fov_x'] = solv_x
+                    json_line['fov_y'] = solv_y
+
+            json_line['transform'] = transform
             dumped = json.dumps(json_line, default=default)
-            
+
             print(dumped)
             trans.write(dumped+"\n")
-    
+
             # output
             #print("predicted pose is:\n", np.round(batch['loftr_rt'].cpu().numpy(),4))
-            last = img
+            last_frame = curent_frame
             last_img_name = img_name
     trans.write("]")
