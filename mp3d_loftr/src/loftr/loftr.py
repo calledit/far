@@ -101,8 +101,8 @@ class LoFTR(nn.Module):
         feat_c1 = rearrange(self.pos_encoding(feat_c1), 'n c h w -> n (h w) c')
 
         mask_c0 = mask_c1 = None  # mask is useful in training
-        if 'mask0' in data:
-            mask_c0, mask_c1 = data['mask0'].flatten(-2), data['mask1'].flatten(-2)
+        if 'feat_mask0' in data:
+            mask_c0, mask_c1 = data['feat_mask0'].flatten(-2), data['feat_mask1'].flatten(-2)
 
         # mask is None, feat_c0 is 1,4800,256 before & after
         feat_c0, feat_c1 = self.loftr_coarse(feat_c0, feat_c1, mask_c0, mask_c1)
