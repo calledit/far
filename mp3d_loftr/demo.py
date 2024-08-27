@@ -32,6 +32,8 @@ def parse_args():
     parser.add_argument(
         '--frame_image_folder', type=str, default="/root/far/mp3d_loftr/data/imgs_4fps/", help='folder with video frames')
     parser.add_argument(
+        '--mask_image_folder', type=str, default="/root/far/mp3d_loftr/data/masks_4fps/", help='folder with video mask frames')
+    parser.add_argument(
         '--num_workers', type=int, default=2)
     parser.add_argument(
         '--fx', type=float, default=517.97, help='focal length x')
@@ -142,14 +144,19 @@ if __name__ == '__main__':
     loaded_preds = torch.tensor([]).unsqueeze(0).cuda()
     lightweight_numcorr = torch.tensor([0]).unsqueeze(0).cuda()
 
-    def load_image(path):
+    def load_image(path, is_mask = False):
         # load data
         image0 = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
         image0 = cv2.resize(image0, (args.w, args.h))
-        image0 = torch.from_numpy(image0).float()[None].unsqueeze(0).cuda() / 255
+        if is_mask:
+            _, image0 = cv2.threshold(image0, 128, 255, cv2.THRESH_BINARY)
+            image0 = torch.from_numpy(image0).float().cuda() / 255
+            image0 = image0.unsqueeze(0)
+        else:
+            image0 = torch.from_numpy(image0).float()[None].unsqueeze(0).cuda() / 255
         return image0
 
-    def solve_tranform(fov_x, fov_y, image0, image1, expect_fail = False):
+    def solve_tranform(fov_x, fov_y, image0, image1, expect_fail = False, mask0 = None, mask1 = None):
         K_0, K_1 = intrin_from(fov_x, fov_y)
         batch = {
             'image0': image0,   # (1, h, w)
@@ -170,27 +177,38 @@ if __name__ == '__main__':
             'expect_fail': expect_fail
         }
 
+        if mask0 is not None:
+            batch['mask0'] = mask0
+        if mask1 is not None:
+            batch['mask1'] = mask1
+
 
         # forward pass
         batch = model.test_step(batch, batch_idx=0, skip_eval=True)
 
-        data = batch['loftr_rt'].cpu().numpy()
 
-        if (np.eye(4)[:3,:4] == data).all():
-            return False
-        return data
+        ret = {}
+        ret['transform'] = batch['loftr_rt'].cpu().numpy()
+        ret['num_correspondences'] = batch['num_correspondences'].cpu().numpy()[0]
+        #ret['translation_scale'] = batch['translation_scale'].cpu().numpy()
 
-    def solve_tranform_no_fov(image0, image1, nr_of_tries=5, initial_gues_fov_x = 47.5, initial_gues_fov_y = 35.5):
+        #if (np.eye(4)[:3,:4] == ret['transform']).all():#Sometimes an eye seams to mean failure somethimes that the camera has not moved
+        #    return False
+        return ret
+
+    def solve_tranform_no_fov(image0, image1, nr_of_tries=5, initial_gues_fov_x = 47.5, initial_gues_fov_y = 35.5, mask0 = None, mask1 = None):
         try_fov_x, try_fov_y, solution = find_fov(
                 [(image0, image1)],
                 initial_gues_fov_x = initial_gues_fov_x,
                 initial_gues_fov_y = initial_gues_fov_y,
                 x_steps = nr_of_tries,
                 y_steps = nr_of_tries,
+                mask0 = mask0,
+                mask1 = mask1,
                 return_when_found = True)
         return (try_fov_x, try_fov_y, solution)
 
-    def find_fov(loaded_image_pairs = [], return_when_found=False, initial_gues_fov_x = 47.5, initial_gues_fov_y = 35.5, step=1, x_steps = 15, y_steps = 10):
+    def find_fov(loaded_image_pairs = [], return_when_found=False, initial_gues_fov_x = 47.5, initial_gues_fov_y = 35.5, step=1, x_steps = 15, y_steps = 10, mask0 = None, mask1 = None):
         fov_x_2_try = [initial_gues_fov_x]
         fov_y_2_try = [initial_gues_fov_y]
 
@@ -221,7 +239,7 @@ if __name__ == '__main__':
                 had_failure = False
                 solution = False
                 for earlier, later in loaded_image_pairs:
-                    solution = solve_tranform(try_fov_x, try_fov_y, later, earlier, expect_fail = not return_when_found)
+                    solution = solve_tranform(try_fov_x, try_fov_y, later, earlier, expect_fail = not return_when_found, mask0 = mask0, mask1 = mask1)
                     if not (solution is not False):
                         had_failure = True
                         if return_when_found:
@@ -293,9 +311,12 @@ if __name__ == '__main__':
             if not num%nth == 0:
                 continue
             img_path = join(args.frame_image_folder, img_name)
+            mask_path = join(args.mask_image_folder, img_name)
             curent_frame = load_image(img_path)
+            curent_mask_frame = load_image(mask_path, True)
             if last_frame == None:
                 last_frame = curent_frame
+                last_mask_frame = curent_mask_frame
                 last_img_name = img_name
                 continue
 
@@ -304,22 +325,19 @@ if __name__ == '__main__':
             else:
                 trans.write(",")#Write json comma
 
-            fov_x, fov_y = 70, 55
-            transform = solve_tranform(fov_x, fov_y, curent_frame, last_frame)
+            fov_x, fov_y = 60, 46.82
+            json_line = solve_tranform(fov_x, fov_y, curent_frame, last_frame, mask0 = curent_mask_frame, mask1 = last_mask_frame)
 
-            json_line = {
-                'nth':nth,
-                'from_frame': int(Path(last_img_name).stem),
-                'to_frame': int(Path(img_name).stem),
-            }
+            json_line['nth'] = nth
+            json_line['from_frame'] =int(Path(last_img_name).stem)
+            json_line['to_frame'] = int(Path(img_name).stem)
 
-            if not (transform is not False):
-                solv_x, solv_y, transform = solve_tranform_no_fov(curent_frame, last_frame, nr_of_tries=2, initial_gues_fov_x = fov_x, initial_gues_fov_y = fov_y)
-                if transform is not False:
-                    json_line['fov_x'] = solv_x
-                    json_line['fov_y'] = solv_y
+            #if not (transform is not False):
+            #    solv_x, solv_y, transform = solve_tranform_no_fov(curent_frame, last_frame, nr_of_tries=2, initial_gues_fov_x = fov_x, initial_gues_fov_y = fov_y)
+            #    if transform is not False:
+            #        json_line['fov_x'] = solv_x
+            #        json_line['fov_y'] = solv_y
 
-            json_line['transform'] = transform
             dumped = json.dumps(json_line, default=default)
 
             print(dumped)
@@ -328,5 +346,6 @@ if __name__ == '__main__':
             # output
             #print("predicted pose is:\n", np.round(batch['loftr_rt'].cpu().numpy(),4))
             last_frame = curent_frame
+            last_mask_frame = curent_mask_frame
             last_img_name = img_name
     trans.write("]")
