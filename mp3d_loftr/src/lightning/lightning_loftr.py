@@ -334,7 +334,7 @@ class PL_LoFTR(pl.LightningModule):
                 (self.config.LOFTR.FROM_SAVED_PREDS is None and self.config.LOFTR.REGRESS.USE_SIMPLE_MOE and not self.config.USE_CORRESPONDENCE_TRANSFORMER):
                 batch['translation_scale'] = None
                 compute_supervision_RT(batch, self.config)
-                if batch['expect_fail'] and not (np.eye(4)[:3,:4] == batch['loftr_rt'].cpu().numpy()).all():
+                if 'expect_fail' in batch and batch['expect_fail'] and not (np.eye(4)[:3,:4] == batch['loftr_rt'].cpu().numpy()).all():
                     return batch
 
             for i in range(self.config.LOFTR.FINE_PRED_STEPS):
