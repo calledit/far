@@ -153,7 +153,7 @@ if __name__ == '__main__':
         if is_depth:
             image0 = (torch.from_numpy(image0).double()/(255*deepth_image_scale)) + deepth_image_offset
         elif is_mask:
-            _, image0 = cv2.threshold(image0, 128, 255, cv2.THRESH_BINARY)
+            _, image0 = cv2.threshold(image0, 10, 255, cv2.THRESH_BINARY)
             image0 = torch.from_numpy(image0).float().cuda() / 255
             image0 = image0.unsqueeze(0)
         else:
