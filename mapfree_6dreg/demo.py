@@ -1,3 +1,6 @@
+from os import listdir
+import json
+from os.path import isfile, join
 import argparse
 from pathlib import Path
 import torch
@@ -48,7 +51,27 @@ def read_image(path, resize):
     inp = torch.from_numpy(image/255.).float()[None, None]
     return inp, w, h
 
-def eval(args):
+fov_x, fov_y = 60, 46.82
+w, h = 640, 480
+
+def intrin_from(fov_x, fov_y):
+    fx = w / (2 * np.tan(np.deg2rad(fov_x) / 2))
+    fy = h / (2 * np.tan(np.deg2rad(fov_y) / 2))
+    return (fx,fy)
+
+parser = argparse.ArgumentParser()
+parser.add_argument('config', help='path to config file')
+parser.add_argument('--checkpoint', help='path to model checkpoint', default='')
+parser.add_argument('--output', help='path to outputfile')
+#parser.add_argument('--img_path0', type=str, help='img path 0')
+#parser.add_argument('--img_path1', type=str, help='img path 1')
+#parser.add_argument('--k0', type=str, nargs='+')
+#parser.add_argument('--k1', type=str, nargs='+')
+args = parser.parse_args()
+
+args.frame_image_folder = "/root/far/mp3d_loftr/data/imgs_4fps/"
+
+if True:
     # Load configs
     cfg.set_new_allowed(True)
     cfg.merge_from_file('config/mapfree.yaml')
@@ -64,27 +87,33 @@ def eval(args):
     args.use_one_inlier_int = False
     resize=(270,360)
     resize_matcher=(540,720)
-    K_color0 = torch.tensor([
-        [float(args.k0[0]), 0, float(args.k0[2])],
-        [0, float(args.k0[1]), float(args.k0[3])],
-        [0, 0, 1]
-    ]).unsqueeze(0)
-    K_color1 = torch.tensor([
-        [float(args.k1[0]), 0, float(args.k1[2])],
-        [0, float(args.k1[1]), float(args.k1[3])],
-        [0, 0, 1]
-    ]).unsqueeze(0)
 
-    # Create model
-    model = build_model(cfg, args.checkpoint, use_loftr_preds=args.use_loftr_preds, use_superglue_preds=args.use_superglue_preds, args=args) 
+        # Create model
+    model = build_model(cfg, args.checkpoint, use_loftr_preds=args.use_loftr_preds, use_superglue_preds=args.use_superglue_preds, args=args)
 
-    im1_path = Path(args.img_path0)
-    im2_path = Path(args.img_path1)
+
+def get_transform(image0_path, image1_path):
+
+    im1_path = Path(image0_path)
+    im2_path = Path(image1_path)
     image0_reg = read_color_image(im1_path, resize).unsqueeze(0)
     image1_reg = read_color_image(im2_path, resize).unsqueeze(0)
     image0, w0, h0 = read_image(im1_path, resize_matcher)
     image1, w1, h1 = read_image(im2_path, resize_matcher)
-    
+
+    fx,fy = intrin_from(fov_x, fov_y)
+    K_color0 = torch.tensor([
+        [float(fx), 0, float(w)/2],
+        [0, float(fy), float(h)/2],
+        [0, 0, 1]
+    ]).unsqueeze(0)
+    K_color1 = torch.tensor([
+        [float(fx), 0, float(w)/2],
+        [0, float(fy), float(h)/2],
+        [0, 0, 1]
+    ]).unsqueeze(0)
+
+
     # scale intrinsics appropriately
     K_color0 = correct_intrinsic_scale(K_color0.numpy(), resize_matcher[0] / w0, resize_matcher[1] / h0)
     K_color1 = correct_intrinsic_scale(K_color1.numpy(), resize_matcher[0] / w1, resize_matcher[1] / h1)
@@ -108,19 +137,65 @@ def eval(args):
     with torch.no_grad():
         R, t = model(data)
         R = rotation_6d_to_matrix(R) # from 6D to matrix
-    
+
     R = R.detach().cpu().numpy()
     t = t.detach().cpu().numpy()
 
-    print(np.round(np.concatenate([R[0],np.swapaxes(t, 0, 1)], axis=1), 4))
+    transform = np.concatenate([R[0],np.swapaxes(t, 0, 1)], axis=1)
+    return transform.tolist()
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument('config', help='path to config file')
-    parser.add_argument('--checkpoint', help='path to model checkpoint', default='')
-    parser.add_argument('--img_path0', type=str, help='img path 0')
-    parser.add_argument('--img_path1', type=str, help='img path 1')
-    parser.add_argument('--k0', type=str, nargs='+')
-    parser.add_argument('--k1', type=str, nargs='+')
-    args = parser.parse_args()
-    eval(args)
+    images = [f for f in listdir(args.frame_image_folder) if isfile(join(args.frame_image_folder, f))]
+
+    first = True
+    trans = open(args.output, "w")
+    trans.write("[")
+    nths = [1000, 100, 50, 25, 10, 5, 1]
+    #nths = [1]
+    for nth in nths:
+        last_frame, last_img_name = None, None
+        num = -1
+        for img_name in images:
+            num+=1
+            if not num%nth == 0:
+                continue
+            img_path = join(args.frame_image_folder, img_name)
+            #mask_path = join(args.mask_image_folder, img_name)
+            curent_frame = img_path#load_image(img_path)
+            #curent_mask_frame = load_image(mask_path, True)
+            if last_frame == None:
+                last_frame = img_path
+                #last_mask_frame = curent_mask_frame
+                last_img_name = img_name
+                continue
+
+            if first:
+                first = False
+            else:
+                trans.write(",")#Write json comma
+
+            fov_x, fov_y = 60, 46.82
+            json_line = {}
+            json_line['transform'] = get_transform(curent_frame, last_frame)# mask0 = curent_mask_frame, mask1 = last_mask_frame)
+
+            json_line['nth'] = nth
+            json_line['from_frame'] =int(Path(last_img_name).stem)
+            json_line['to_frame'] = int(Path(img_name).stem)
+
+            #if not (transform is not False):
+            #    solv_x, solv_y, transform = solve_tranform_no_fov(curent_frame, last_frame, nr_of_tries=2, initial_gues_fov_x = fov_x, initial_gues_fov_y = fov_y)
+            #    if transform is not False:
+            #        json_line['fov_x'] = solv_x
+            #        json_line['fov_y'] = solv_y
+
+            dumped = json.dumps(json_line)
+
+            print(dumped)
+            trans.write(dumped+"\n")
+
+            # output
+            #print("predicted pose is:\n", np.round(batch['loftr_rt'].cpu().numpy(),4))
+            last_frame = img_path
+            #last_mask_frame = curent_mask_frame
+            last_img_name = img_name
+    trans.write("]")
