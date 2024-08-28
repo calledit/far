@@ -344,7 +344,7 @@ class PL_LoFTR(pl.LightningModule):
                 if batch['num_correspondences'] == 0:#there is no point of continuing if there are no correspondances also there is a bug causing a crash if you continue with zero correspondences
                     break
                     
-                if i < self.config.LOFTR.FINE_PRED_STEPS - 1 and ('prior_ransac' in self.config.LOFTR.SOLVER or self.config.LOFTR.SOLVER == "prior_ransac_noprior"):
+                if ('prior_ransac' in self.config.LOFTR.SOLVER or self.config.LOFTR.SOLVER == "prior_ransac_noprior"):
                     compute_supervision_RT(batch, self.config)
 
         if not skip_eval:
