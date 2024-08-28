@@ -144,11 +144,15 @@ if __name__ == '__main__':
     loaded_preds = torch.tensor([]).unsqueeze(0).cuda()
     lightweight_numcorr = torch.tensor([0]).unsqueeze(0).cuda()
 
-    def load_image(path, is_mask = False):
+    def load_image(path, is_mask = False, is_depth = False):
         # load data
         image0 = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
         image0 = cv2.resize(image0, (args.w, args.h))
-        if is_mask:
+        deepth_image_offset = 0.7
+        deepth_image_scale = 5
+        if is_depth:
+            image0 = (torch.from_numpy(image0).double()/(255*deepth_image_scale)) + deepth_image_offset
+        elif is_mask:
             _, image0 = cv2.threshold(image0, 128, 255, cv2.THRESH_BINARY)
             image0 = torch.from_numpy(image0).float().cuda() / 255
             image0 = image0.unsqueeze(0)
@@ -156,7 +160,7 @@ if __name__ == '__main__':
             image0 = torch.from_numpy(image0).float()[None].unsqueeze(0).cuda() / 255
         return image0
 
-    def solve_tranform(fov_x, fov_y, image0, image1, expect_fail = False, mask0 = None, mask1 = None):
+    def solve_tranform(fov_x, fov_y, image0, image1, expect_fail = False, mask0 = None, mask1 = None, depth0 = None, depth1 = None):
         K_0, K_1 = intrin_from(fov_x, fov_y)
         batch = {
             'image0': image0,   # (1, h, w)
@@ -181,6 +185,11 @@ if __name__ == '__main__':
             batch['mask0'] = mask0
         if mask1 is not None:
             batch['mask1'] = mask1
+
+        if depth0 is not None:
+            batch['depth0'] = depth0
+        if depth1 is not None:
+            batch['depth1'] = depth1
 
 
         # forward pass
@@ -314,9 +323,11 @@ if __name__ == '__main__':
             mask_path = join(args.mask_image_folder, img_name)
             curent_frame = load_image(img_path)
             curent_mask_frame = load_image(mask_path, True)
+            curent_depth_frame = load_image(path, is_depth = True)
             if last_frame == None:
                 last_frame = curent_frame
                 last_mask_frame = curent_mask_frame
+                last_depth_frame = curent_depth_frame
                 last_img_name = img_name
                 continue
 
@@ -326,7 +337,7 @@ if __name__ == '__main__':
                 trans.write(",")#Write json comma
 
             fov_x, fov_y = 60, 46.82
-            json_line = solve_tranform(fov_x, fov_y, curent_frame, last_frame, mask0 = curent_mask_frame, mask1 = last_mask_frame)
+            json_line = solve_tranform(fov_x, fov_y, curent_frame, last_frame, mask0 = curent_mask_frame, mask1 = last_mask_frame, depth0 = curent_depth_frame, depth1 = last_depth_frame)
 
             json_line['nth'] = nth
             json_line['from_frame'] =int(Path(last_img_name).stem)
@@ -347,5 +358,6 @@ if __name__ == '__main__':
             #print("predicted pose is:\n", np.round(batch['loftr_rt'].cpu().numpy(),4))
             last_frame = curent_frame
             last_mask_frame = curent_mask_frame
+            last_depth_frame = curent_depth_frame
             last_img_name = img_name
     trans.write("]")
