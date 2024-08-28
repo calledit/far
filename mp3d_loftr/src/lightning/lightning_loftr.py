@@ -340,7 +340,10 @@ class PL_LoFTR(pl.LightningModule):
             for i in range(self.config.LOFTR.FINE_PRED_STEPS):
                 with self.profiler.profile("LoFTR"):
                     self.matcher.forward_rt_prediction(batch)
-
+                    
+                if batch['num_correspondences'] == 0:#there is no point of continuing if there are no correspondances also there is a bug causing a crash if you continue with zero correspondences
+                    break
+                    
                 if i < self.config.LOFTR.FINE_PRED_STEPS - 1 and ('prior_ransac' in self.config.LOFTR.SOLVER or self.config.LOFTR.SOLVER == "prior_ransac_noprior"):
                     compute_supervision_RT(batch, self.config)
 
