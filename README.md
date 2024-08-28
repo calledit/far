@@ -1,4 +1,4 @@
-# branch with video processing scripts
+# branch with video processing scripts (me hacking away) (not intended for public consumtion be aware code and commit quality may vary)
 
 ```
 git clone --recursive https://github.com/calledit/far.git
